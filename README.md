@@ -1,5 +1,3 @@
-Here's the updated README content:
-
 # Terraform Proxmox Kubernetes Cluster
 
 Welcome to the Terraform configuration for setting up a Kubernetes cluster on Proxmox VE! This setup is fully parameterized and designed to be flexible. Just provide an external `terraform.tfvars` file during `plan` and `apply` stages, and you're good to go. Also, the Terraform state is stored remotely in an AWS S3 bucket for easy access and collaboration.
