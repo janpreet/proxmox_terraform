@@ -1,56 +1,69 @@
-package terraform.kubernetes
+package terraform
 
-deny[{"msg": msg}] {
-    contains_sensitive_data(input.resource_changes)
-    msg := "Sensitive data found in configuration. Please use variables for sensitive data."
+import input as tfplan
+
+allowed_roles = ["loadbalancer", "master", "worker"]
+
+get_role(name) = role {
+    parts := split(name, "-")
+    role := parts[3]
 }
 
-contains_sensitive_data(resource_changes) {
-    resource := resource_changes[_]
-    resource.change.after.pm_password
+violation[msg] {
+    roles := tfplan.variables.vm_roles.value
+    expected_total := roles.loadbalancer + roles.master + roles.worker
+    
+    vm_resources := [res | res := tfplan.resource_changes[_]; res.type == "proxmox_vm_qemu"]
+    total_vms := count(vm_resources)
+    
+    total_vms != expected_total
+    
+    msg := sprintf("Expected %d VMs, but found %d", [expected_total, total_vms])
 }
 
-deny[{"msg": msg}] {
-    count(input.configuration.root_module.variables.proxmox_nodes.default) < 2
-    msg := "VMs must be distributed across at least two nodes."
+violation[msg] {
+    roles := tfplan.variables.vm_roles.value
+    vm_resources := [res | res := tfplan.resource_changes[_]; res.type == "proxmox_vm_qemu"]
+    
+    role := allowed_roles[_]
+    expected := roles[role]
+    actual := count([1 | vm := vm_resources[_]; get_role(vm.change.after.name) == role])
+    
+    expected != actual
+    
+    msg := sprintf("Mismatch in VM count for role '%s'. Expected: %d, Found: %d", [role, expected, actual])
 }
 
-deny[{"msg": msg}] {
-    input.configuration.root_module.variables.vm_template.default != "100"
-    msg := "VM template must be set to 100."
+violation[msg] {
+    res := tfplan.resource_changes[_]
+    res.type == "proxmox_vm_qemu"
+    role := get_role(res.change.after.name)
+    not array_contains(allowed_roles, role)
+    msg := sprintf("Invalid role '%s' for VM '%s'", [role, res.change.after.name])
 }
 
-deny[{"msg": msg}] {
-    input.configuration.root_module.variables.vm_cpu.default > 4
-    msg := "VM CPU must not exceed 4 cores."
+array_contains(arr, elem) {
+    arr[_] = elem
 }
 
-deny[{"msg": msg}] {
-    input.configuration.root_module.variables.vm_memory.default > 8192
-    msg := "VM memory must not exceed 8192 MB."
+allow {
+    count(violation) == 0
 }
 
-deny[{"msg": msg}] {
-    not input.configuration.root_module.variables.s3_bucket.default
-    msg := "S3 bucket for remote state storage must be specified."
+result = msg {
+    count(violation) > 0
+    msg := concat(", ", violation)
+} else = msg {
+    msg := "Allowed: All checks passed. The Terraform plan for Proxmox VMs is valid."
 }
 
-deny[{"msg": msg}] {
-    not input.configuration.root_module.variables.s3_key.default
-    msg := "S3 key for remote state storage must be specified."
+info[msg] {
+    res := tfplan.resource_changes[_]
+    res.type == "proxmox_vm_qemu"
+    role := get_role(res.change.after.name)
+    msg := sprintf("VM: Name=%s, Role=%s, Node=%s", [res.change.after.name, role, res.change.after.target_node])
 }
 
-deny[{"msg": msg}] {
-    not input.configuration.provider_config.aws.expressions.region.references[0]
-    msg := "AWS region for remote state storage must be specified."
-}
-
-deny[{"msg": msg}] {
-    not input.configuration.root_module.variables.ssh_public_key_content.default
-    msg := "SSH public key content must be specified."
-}
-
-deny[{"msg": msg}] {
-    input.configuration.root_module.variables.pm_password.default
-    msg := "Plain-text secrets must not be used in the configuration. Use environment variables instead."
+info[msg] {
+    msg := sprintf("VM Roles: %s", [tfplan.variables.vm_roles.value])
 }
